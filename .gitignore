@@ -1,0 +1,49 @@
+# Unity
+[Ll]ibrary/
+[Tt]emp/
+[Oo]bj/
+[Bb]uild/
+[Bb]uilds/
+[Ll]ogs/
+[Uu]ser[Ss]ettings/
+[Mm]emory[Cc]aptures/
+
+# Unity generated files
+*.pidb
+*.suo
+*.user
+*.unityproj
+*.sln
+*.csproj
+*.cache
+*.meta
+
+# Visual Studio / Rider
+.vs/
+*.csproj.user
+*.suo
+*.user
+*.sln.docstates
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Photon
+Assets/Photon/PhotonUnityNetworking/Resources/PhotonServerSettings.asset
+
+# Builds
+Builds/
+*.apk
+*.aab
+*.ipa
+*.exe
+*.app
+
+# Logs
+*.log
+crashlytics-build.properties
+
+# Local config
+*.local
+*.local.meta

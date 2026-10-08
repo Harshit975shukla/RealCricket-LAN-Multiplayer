@@ -1,0 +1,14 @@
+{
+  "AppSettings": {
+    "AppIdRealtime": "MasterServer",
+    "AppVersion": "1.0.0",
+    "FixedRegion": "",
+    "Server": "127.0.0.1",
+    "Port": 5055,
+    "Protocol": "Udp",
+    "UseNameServer": false,
+    "EnableLobbyStatistics": true,
+    "NetworkLogging": "INFO",
+    "DisableAutoOpenWizard": true
+  }
+}
