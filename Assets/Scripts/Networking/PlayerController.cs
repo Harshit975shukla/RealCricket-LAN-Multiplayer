@@ -284,38 +284,51 @@ public class PlayerController : MonoBehaviour
         {
             Vector3 ballPos = ballObj.transform.position;
             float dist = Vector3.Distance(transform.position, ballPos);
+            Rigidbody ballRb = ballObj.GetComponent<Rigidbody>();
 
             // Batsman hitting range
             if (dist <= 3.2f)
             {
                 hasHitBallThisSwing = true;
 
-                // Horizontal movement (A/D) aims shot to Off-side (-X) or Leg-side (+X)
-                float aimX = moveInput.x * 1.5f + UnityEngine.Random.Range(-0.15f, 0.15f);
-                float loftAngle = UnityEngine.Random.Range(0.28f, 0.58f); // High loft into the outfield
+                // ---- Timing quality: how close the ball is to the ideal strike zone ----
+                // Perfect contact happens ~0.8-1.2m in front of the batsman at knee-waist height.
+                Vector3 idealStrike = transform.position + transform.forward * 1.0f + Vector3.up * 0.6f;
+                float timingError = Vector3.Distance(ballPos, idealStrike);
+
+                // 0 = perfectly middled, >=1.2 = edged/mistimed
+                float timingQuality = Mathf.Clamp01(1.0f - (timingError / 1.2f));
+
+                // Aim: A/D steers off-side (-X) / leg-side (+X)
+                float aimX = moveInput.x * 1.5f + UnityEngine.Random.Range(-0.2f, 0.2f) * (1f - timingQuality * 0.5f);
+
+                // Loft scales with timing - perfect timing lets you keep it down or launch it
+                float loftAngle = Mathf.Lerp(0.12f, 0.65f, UnityEngine.Random.Range(0f, 1f) * (0.4f + timingQuality * 0.6f));
                 Vector3 shotDir = new Vector3(aimX, loftAngle, 1.0f).normalized;
 
-                // Shot power based on swingForce + variance
-                float shotPower = swingForce * UnityEngine.Random.Range(1.35f, 1.95f);
+                // Power: heavily timing-dependent (edges dribble, middled shots fly)
+                float powerMultiplier = Mathf.Lerp(0.45f, 2.1f, timingQuality) * UnityEngine.Random.Range(0.9f, 1.15f);
+                float shotPower = swingForce * powerMultiplier;
 
                 BallController bc = ballObj.GetComponent<BallController>();
                 if (bc != null)
                 {
                     bc.ApplyBatForce(shotDir * shotPower, 1);
                 }
-                else
+                else if (ballRb != null)
                 {
-                    Rigidbody rbBall = ballObj.GetComponent<Rigidbody>();
-                    if (rbBall != null)
-                    {
-                        rbBall.velocity = Vector3.zero;
-                        rbBall.AddForce(shotDir * shotPower, ForceMode.Impulse);
-                    }
+                    ballRb.velocity = Vector3.zero;
+                    ballRb.AddForce(shotDir * shotPower, ForceMode.Impulse);
                 }
 
                 if (CricketGameManager.Instance != null)
                 {
                     CricketGameManager.Instance.OnBallHit(shotDir * shotPower);
+                    // Very poor timing (edge, high ball) risks a catch by slip/keeper
+                    if (timingQuality < 0.25f && ballPos.y > 1.1f)
+                    {
+                        CricketGameManager.Instance.RegisterEdgeChance();
+                    }
                 }
             }
         }

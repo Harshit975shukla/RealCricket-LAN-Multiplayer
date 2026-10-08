@@ -170,19 +170,48 @@ public class LANSceneSetup : EditorWindow
         rightPad.transform.localScale = new Vector3(0.17f, 0.78f, 0.16f);
         rightPad.GetComponent<Renderer>().material = padMat;
         
-        // Bat positioned realistically in batsman's hands
+        // Bat: use CC0 cricket bat model if available, else cylinder primitive
         GameObject bat = new GameObject("Bat");
         bat.transform.SetParent(player.transform);
         bat.transform.localPosition = new Vector3(0.35f, 0.75f, 0.35f);
         bat.transform.localRotation = Quaternion.Euler(15, -20, 10);
-        bat.transform.localScale = new Vector3(0.08f, 0.85f, 0.08f);
-        GameObject batMesh = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
-        batMesh.transform.SetParent(bat.transform);
-        batMesh.transform.localPosition = Vector3.zero;
-        batMesh.transform.localScale = new Vector3(1, 1, 1);
-        Material batMat = new Material(Shader.Find("Standard"));
-        batMat.color = new Color(0.85f, 0.72f, 0.52f); // Willow wood
-        batMesh.GetComponent<Renderer>().material = batMat;
+        bat.transform.localScale = Vector3.one * 0.45f; // typical FBX scale for these packs
+
+        GameObject batModel = AssetDatabase.LoadAssetAtPath<GameObject>("Assets/CricketModels/cricket_bat_1.fbx");
+        Texture2D batTex = AssetDatabase.LoadAssetAtPath<Texture2D>("Assets/CricketModels/Textures/bat_1.png");
+        if (batModel != null)
+        {
+            GameObject batMesh = (GameObject)PrefabUtility.InstantiatePrefab(batModel);
+            batMesh.transform.SetParent(bat.transform);
+            batMesh.transform.localPosition = Vector3.zero;
+            batMesh.transform.localRotation = Quaternion.identity;
+            // Normalise bat to ~0.85m tall in hand
+            Renderer batRend = batMesh.GetComponentInChildren<Renderer>();
+            if (batRend != null)
+            {
+                float batHeight = batRend.bounds.size.y;
+                if (batHeight > 0.001f) batMesh.transform.localScale *= (0.85f / batHeight);
+            }
+            if (batTex != null)
+            {
+                foreach (Renderer r in batMesh.GetComponentsInChildren<Renderer>())
+                {
+                    Material m = new Material(Shader.Find("Standard"));
+                    m.mainTexture = batTex;
+                    r.material = m;
+                }
+            }
+        }
+        else
+        {
+            GameObject batMesh = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+            batMesh.transform.SetParent(bat.transform);
+            batMesh.transform.localPosition = Vector3.zero;
+            batMesh.transform.localScale = Vector3.one;
+            Material batMat = new Material(Shader.Find("Standard"));
+            batMat.color = new Color(0.85f, 0.72f, 0.52f); // Willow wood
+            batMesh.GetComponent<Renderer>().material = batMat;
+        }
         
         // Ball release point
         GameObject releasePoint = new GameObject("BallReleasePoint");
@@ -236,18 +265,49 @@ public class LANSceneSetup : EditorWindow
         pv.ObservedComponents.Add(rigidbodyView);
 #endif
         
-        // Visual
-        GameObject ballMesh = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+        // Visual: use the CC0 cricket ball model with stitched texture if available,
+        // fall back to a primitive sphere otherwise.
+        GameObject ballMesh;
+        GameObject ballModel = AssetDatabase.LoadAssetAtPath<GameObject>("Assets/CricketModels/cricket_ball_new.fbx");
+        Texture2D ballTex = AssetDatabase.LoadAssetAtPath<Texture2D>("Assets/CricketModels/Textures/ball_new.png");
+        if (ballModel != null)
+        {
+            ballMesh = (GameObject)PrefabUtility.InstantiatePrefab(ballModel);
+            // FBX import can scale wildly; normalise to cricket ball size (7.2cm diameter)
+            float baseSize = ballMesh.GetComponentInChildren<Renderer>().bounds.size.y;
+            if (baseSize > 0.001f) ballMesh.transform.localScale = Vector3.one * (0.072f / baseSize);
+        }
+        else
+        {
+            ballMesh = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+            ballMesh.transform.localScale = Vector3.one * 0.072f;
+        }
         ballMesh.name = "BallMesh";
         ballMesh.transform.SetParent(ball.transform);
         ballMesh.transform.localPosition = Vector3.zero;
-        ballMesh.transform.localScale = Vector3.one * 0.072f; // Diameter ~7.2cm
-        
-        // Red cricket ball material
-        Material ballMat = new Material(Shader.Find("Standard"));
-        ballMat.color = new Color(0.85f, 0.12f, 0.12f);
-        ballMat.SetFloat("_Glossiness", 0.6f);
-        ballMesh.GetComponent<Renderer>().material = ballMat;
+        ballMesh.transform.localRotation = Quaternion.identity;
+
+        // Apply stitched-leather texture if available
+        if (ballTex != null)
+        {
+            foreach (Renderer r in ballMesh.GetComponentsInChildren<Renderer>())
+            {
+                Material m = new Material(Shader.Find("Standard"));
+                m.mainTexture = ballTex;
+                m.SetFloat("_Glossiness", 0.6f);
+                r.material = m;
+            }
+        }
+        else
+        {
+            Material ballMat = new Material(Shader.Find("Standard"));
+            ballMat.color = new Color(0.85f, 0.12f, 0.12f);
+            ballMat.SetFloat("_Glossiness", 0.6f);
+            foreach (Renderer r in ballMesh.GetComponentsInChildren<Renderer>()) r.material = ballMat;
+        }
+
+        // Strip any colliders the FBX brought in (root owns the SphereCollider)
+        foreach (Collider c in ballMesh.GetComponentsInChildren<Collider>()) Object.DestroyImmediate(c);
         
         // Save as prefab
         string prefabPath = "Assets/Prefabs/CricketBall.prefab";
@@ -311,14 +371,43 @@ public class LANSceneSetup : EditorWindow
         Collider infieldCol = infield.GetComponent<Collider>();
         if (infieldCol != null) Object.DestroyImmediate(infieldCol);
 
-        // 4. Regulation 22-Yard Cricket Pitch (Sandy Clay)
-        GameObject pitch = GameObject.CreatePrimitive(PrimitiveType.Cube);
-        pitch.name = "Pitch";
-        pitch.transform.position = new Vector3(0, 0.03f, 0);
-        pitch.transform.localScale = new Vector3(3.2f, 0.04f, 20.12f);
-        Material pitchMat = new Material(Shader.Find("Standard"));
-        pitchMat.color = new Color(0.85f, 0.76f, 0.55f); // Warm clay pitch
-        pitch.GetComponent<Renderer>().material = pitchMat;
+        // 4. Regulation 22-Yard Cricket Pitch (Sandy Clay) - use CC0 pitch model if available
+        GameObject pitch;
+        GameObject pitchModel = AssetDatabase.LoadAssetAtPath<GameObject>("Assets/CricketModels/cricket_pitch_1.fbx");
+        Texture2D pitchTex = AssetDatabase.LoadAssetAtPath<Texture2D>("Assets/CricketModels/Textures/pitch_1.png");
+        if (pitchModel != null)
+        {
+            pitch = (GameObject)PrefabUtility.InstantiatePrefab(pitchModel);
+            pitch.name = "Pitch";
+            pitch.transform.position = new Vector3(0, 0.03f, 0);
+            Renderer pr = pitch.GetComponentInChildren<Renderer>();
+            if (pr != null)
+            {
+                // Normalise to regulation 3.05m x 20.12m strip
+                Vector3 sz = pr.bounds.size;
+                if (sz.z > 0.001f) pitch.transform.localScale = new Vector3(3.2f / sz.x, 1f, 20.12f / sz.z);
+            }
+            if (pitchTex != null)
+            {
+                foreach (Renderer rend in pitch.GetComponentsInChildren<Renderer>())
+                {
+                    Material m = new Material(Shader.Find("Standard"));
+                    m.mainTexture = pitchTex;
+                    rend.material = m;
+                }
+            }
+            foreach (Collider c in pitch.GetComponentsInChildren<Collider>()) Object.DestroyImmediate(c);
+        }
+        else
+        {
+            pitch = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            pitch.name = "Pitch";
+            pitch.transform.position = new Vector3(0, 0.03f, 0);
+            pitch.transform.localScale = new Vector3(3.2f, 0.04f, 20.12f);
+            Material pitchMat = new Material(Shader.Find("Standard"));
+            pitchMat.color = new Color(0.85f, 0.76f, 0.55f); // Warm clay pitch
+            pitch.GetComponent<Renderer>().material = pitchMat;
+        }
         
         // Crease markings (Crisp White Chalk Lines)
         Material creaseMat = new Material(Shader.Find("Standard"));
@@ -600,33 +689,100 @@ public class LANSceneSetup : EditorWindow
     {
         GameObject stumps = new GameObject("Stumps");
         stumps.transform.position = position;
-        
-        // Three stumps
-        for (int i = 0; i < 3; i++)
+
+        // Try CC0 stump model first
+        GameObject stumpModel = AssetDatabase.LoadAssetAtPath<GameObject>("Assets/CricketModels/cricket_stump.fbx");
+        Texture2D stumpTex = AssetDatabase.LoadAssetAtPath<Texture2D>("Assets/CricketModels/Textures/stump_1.png");
+        GameObject bailModel = AssetDatabase.LoadAssetAtPath<GameObject>("Assets/CricketModels/cricket_bail.fbx");
+        Texture2D bailTex = AssetDatabase.LoadAssetAtPath<Texture2D>("Assets/CricketModels/Textures/bails_1.png");
+
+        if (stumpModel != null)
         {
-            GameObject stump = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
-            stump.name = $"Stump_{i}";
-            stump.transform.SetParent(stumps.transform);
-            stump.transform.localPosition = new Vector3((i - 1) * 0.09f, 0.35f, 0); // 9 inches apart
-            stump.transform.localScale = new Vector3(0.038f, 0.71f, 0.038f); // Cricket stump dimensions
-            
-            Material stumpMat = new Material(Shader.Find("Standard"));
-            stumpMat.color = new Color(0.9f, 0.85f, 0.7f); // Wood color
-            stump.GetComponent<Renderer>().material = stumpMat;
+            // Model may contain one stump; instance it 3 times at regulation spacing
+            for (int i = 0; i < 3; i++)
+            {
+                GameObject stump = (GameObject)PrefabUtility.InstantiatePrefab(stumpModel);
+                stump.name = $"Stump_{i}";
+                stump.transform.SetParent(stumps.transform);
+                stump.transform.localPosition = new Vector3((i - 1) * 0.09f, 0.35f, 0);
+
+                Renderer r = stump.GetComponentInChildren<Renderer>();
+                if (r != null)
+                {
+                    float h = r.bounds.size.y;
+                    if (h > 0.001f) stump.transform.localScale *= (0.71f / h);
+                }
+                if (stumpTex != null)
+                {
+                    foreach (Renderer rend in stump.GetComponentsInChildren<Renderer>())
+                    {
+                        Material m = new Material(Shader.Find("Standard"));
+                        m.mainTexture = stumpTex;
+                        rend.material = m;
+                    }
+                }
+                foreach (Collider c in stump.GetComponentsInChildren<Collider>()) Object.DestroyImmediate(c);
+            }
         }
-        
-        // Bails
-        for (int i = 0; i < 2; i++)
+        else
         {
-            GameObject bail = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            bail.name = $"Bail_{i}";
-            bail.transform.SetParent(stumps.transform);
-            bail.transform.localPosition = new Vector3((i - 0.5f) * 0.09f, 0.71f, 0);
-            bail.transform.localScale = new Vector3(0.11f, 0.013f, 0.038f);
-            
-            Material bailMat = new Material(Shader.Find("Standard"));
-            bailMat.color = new Color(0.9f, 0.85f, 0.7f);
-            bail.GetComponent<Renderer>().material = bailMat;
+            // Three stumps (primitive fallback)
+            for (int i = 0; i < 3; i++)
+            {
+                GameObject stump = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+                stump.name = $"Stump_{i}";
+                stump.transform.SetParent(stumps.transform);
+                stump.transform.localPosition = new Vector3((i - 1) * 0.09f, 0.35f, 0); // 9 inches apart
+                stump.transform.localScale = new Vector3(0.038f, 0.71f, 0.038f); // Cricket stump dimensions
+
+                Material stumpMat = new Material(Shader.Find("Standard"));
+                stumpMat.color = new Color(0.9f, 0.85f, 0.7f); // Wood color
+                stump.GetComponent<Renderer>().material = stumpMat;
+            }
+        }
+
+        // Bails
+        if (bailModel != null)
+        {
+            for (int i = 0; i < 2; i++)
+            {
+                GameObject bail = (GameObject)PrefabUtility.InstantiatePrefab(bailModel);
+                bail.name = $"Bail_{i}";
+                bail.transform.SetParent(stumps.transform);
+                bail.transform.localPosition = new Vector3((i - 0.5f) * 0.09f, 0.71f, 0);
+
+                Renderer r = bail.GetComponentInChildren<Renderer>();
+                if (r != null)
+                {
+                    float len = r.bounds.size.magnitude;
+                    if (len > 0.001f) bail.transform.localScale *= (0.11f / len);
+                }
+                if (bailTex != null)
+                {
+                    foreach (Renderer rend in bail.GetComponentsInChildren<Renderer>())
+                    {
+                        Material m = new Material(Shader.Find("Standard"));
+                        m.mainTexture = bailTex;
+                        rend.material = m;
+                    }
+                }
+                foreach (Collider c in bail.GetComponentsInChildren<Collider>()) Object.DestroyImmediate(c);
+            }
+        }
+        else
+        {
+            for (int i = 0; i < 2; i++)
+            {
+                GameObject bail = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                bail.name = $"Bail_{i}";
+                bail.transform.SetParent(stumps.transform);
+                bail.transform.localPosition = new Vector3((i - 0.5f) * 0.09f, 0.71f, 0);
+                bail.transform.localScale = new Vector3(0.11f, 0.013f, 0.038f);
+
+                Material bailMat = new Material(Shader.Find("Standard"));
+                bailMat.color = new Color(0.9f, 0.85f, 0.7f);
+                bail.GetComponent<Renderer>().material = bailMat;
+            }
         }
     }
     

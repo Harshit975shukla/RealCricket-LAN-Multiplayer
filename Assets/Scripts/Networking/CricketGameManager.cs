@@ -1127,6 +1127,31 @@ public class CricketGameManager : MonoBehaviour
         ballRb.angularVelocity = Vector3.zero;
     }
 
+    /// <summary>
+    /// Poorly-timed edge behind the wicket: chance of being caught by slip/keeper.
+    /// Called by PlayerController when contact quality was terrible.
+    /// </summary>
+    public void RegisterEdgeChance()
+    {
+        if (hasScoredThisBall || !isBallInPlay || !wasBallHit) return;
+        if (UnityEngine.Random.value <= 0.35f)
+        {
+            hasScoredThisBall = true;
+            isRunning = false;
+            battingTeamWickets++;
+            bannerMessage = "CAUGHT BEHIND!! Edged and taken - great take by the keeper!";
+            bannerTimer = 3.5f;
+            RecordShotOutcome(0, bannerMessage, suppressBanner: true);
+            broadcastCam?.TriggerWicketReplay();
+            Invoke(nameof(AutoResetBall), 3.0f);
+        }
+        else
+        {
+            bannerMessage = "Thick edge - flies past the keeper! Lucky!";
+            bannerTimer = 2.0f;
+        }
+    }
+
     // Cached GUI Styles
     private GUIStyle cachedTitleStyle;
     private GUIStyle cachedScoreStyle;
