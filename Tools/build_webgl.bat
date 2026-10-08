@@ -2,12 +2,20 @@
 REM build_webgl.bat - Build WebGL version and package as single .exe
 REM Run this from Unity installation directory or with Unity in PATH
 
-set PROJECT_PATH=%~dp0
-set UNITY_PATH=%PROGRAMFILES%\Unity\Hub\Editor\2022.3.62f3\Editor\Unity.exe
+pushd "%~dp0.."
+set PROJECT_PATH=%CD%
+popd
 
-if not exist "%UNITY_PATH%" (
-    echo Unity not found at %UNITY_PATH%
-    echo Please install Unity 2022.3 LTS or update UNITY_PATH in this script
+set UNITY_PATH=
+if exist "%PROGRAMFILES%\Unity\Hub\Editor\6000.6.4f1\Editor\Unity.exe" (
+    set UNITY_PATH=%PROGRAMFILES%\Unity\Hub\Editor\6000.6.4f1\Editor\Unity.exe
+) else if exist "%PROGRAMFILES%\Unity\Hub\Editor\2022.3.62f3\Editor\Unity.exe" (
+    set UNITY_PATH=%PROGRAMFILES%\Unity\Hub\Editor\2022.3.62f3\Editor\Unity.exe
+)
+
+if "%UNITY_PATH%"=="" (
+    echo Unity not found in default Hub locations.
+    echo Please install Unity or update UNITY_PATH in this script
     pause
     exit /b 1
 )

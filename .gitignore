@@ -46,4 +46,10 @@ crashlytics-build.properties
 
 # Local config
 *.local
-*.local.meta
+*.local.metaBallController.dll
+Builds/
+Library/
+Temp/
+Logs/
+obj/
+dist/

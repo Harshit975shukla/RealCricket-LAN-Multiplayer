@@ -1,14 +1,20 @@
 using UnityEngine;
+using System.Collections.Generic;
+
+#if PHOTON_PUN_2 || PHOTON_REALTIME
 using Photon.Pun;
 using Photon.Realtime;
-using System.Collections.Generic;
 using ExitGames.Client.Photon;
+#endif
 
 /// <summary>
 /// LAN Network Manager for RealCricket - enables LAN multiplayer without Photon Cloud
 /// Uses Photon's LAN capabilities (PhotonServerSettings with AppId = "MasterServer")
 /// </summary>
-public class LANNetworkManager : MonoBehaviourPunCallbacks
+public class LANNetworkManager : MonoBehaviour
+#if PHOTON_PUN_2 || PHOTON_REALTIME
+    , Photon.Pun.IMonoBehaviourPunCallbacks
+#endif
 {
     [Header("LAN Settings")]
     [SerializeField] private string lanServerAddress = "127.0.0.1";
@@ -25,16 +31,30 @@ public class LANNetworkManager : MonoBehaviourPunCallbacks
     [SerializeField] private GameObject playerPrefab;
     [SerializeField] private Transform[] spawnPoints;
     
-    private TypedLobby sqlLobby;
-    private RoomOptions roomOptions;
+#if PHOTON_PUN_2 || PHOTON_REALTIME
+    private Photon.Realtime.TypedLobby sqlLobby;
+    private Photon.Realtime.RoomOptions roomOptions;
     private bool isConnecting = false;
     
     public static LANNetworkManager Instance { get; private set; }
     
     public bool IsConnected => PhotonNetwork.IsConnected;
     public bool InRoom => PhotonNetwork.InRoom;
-    public Room CurrentRoom => PhotonNetwork.CurrentRoom;
-    public Player LocalPlayer => PhotonNetwork.LocalPlayer;
+    public Photon.Realtime.Room CurrentRoom => PhotonNetwork.CurrentRoom;
+    public Photon.Realtime.Player LocalPlayer => PhotonNetwork.LocalPlayer;
+#else
+    // Stubs for when Photon is not installed
+    private object sqlLobby;
+    private object roomOptions;
+    private bool isConnecting = false;
+    
+    public static LANNetworkManager Instance { get; private set; }
+    
+    public bool IsConnected => false;
+    public bool InRoom => false;
+    public object CurrentRoom => null;
+    public object LocalPlayer => null;
+#endif
     
     private void Awake()
     {
@@ -52,6 +72,7 @@ public class LANNetworkManager : MonoBehaviourPunCallbacks
     
     private void InitializePhotonSettings()
     {
+#if PHOTON_PUN_2 || PHOTON_REALTIME
         // Configure Photon for LAN (no AppId needed for local Photon server)
         PhotonNetwork.PhotonServerSettings.AppSettings.AppIdRealtime = "MasterServer";
         PhotonNetwork.PhotonServerSettings.AppSettings.Server = lanServerAddress;
@@ -63,11 +84,6 @@ public class LANNetworkManager : MonoBehaviourPunCallbacks
         PhotonNetwork.PhotonServerSettings.AppSettings.FixedRegion = "";
         PhotonNetwork.PhotonServerSettings.AppSettings.EnableLobbyStatistics = true;
         
-        // Network simulation for testing
-        #if UNITY_EDITOR
-        PhotonNetwork.NetworkClientState = ClientState.PeerCreated;
-        #endif
-        
         // Room options
         roomOptions = new RoomOptions
         {
@@ -76,8 +92,8 @@ public class LANNetworkManager : MonoBehaviourPunCallbacks
             IsOpen = true,
             CleanupCacheOnLeave = true,
             DeleteNullProperties = true,
-            PlayerTtl = 30000, // 30 seconds player TTL for reconnection
-            EmptyRoomTtl = 60000 // Keep room for 60 seconds after last player leaves
+            PlayerTtl = 30000,
+            EmptyRoomTtl = 60000
         };
         
         // SQL lobby for filtering
@@ -88,10 +104,12 @@ public class LANNetworkManager : MonoBehaviourPunCallbacks
         
         // Set log level
         PhotonNetwork.LogLevel = PunLogLevel.Informational;
+#endif
     }
     
     public void ConnectToLAN()
     {
+#if PHOTON_PUN_2 || PHOTON_REALTIME
         if (isConnecting || PhotonNetwork.IsConnected)
         {
             Debug.Log("[LANNetworkManager] Already connected or connecting");
@@ -103,8 +121,13 @@ public class LANNetworkManager : MonoBehaviourPunCallbacks
         
         PhotonNetwork.ConnectUsingSettings();
         PhotonNetwork.GameVersion = gameVersion;
+#else
+        Debug.LogWarning("[LANNetworkManager] Photon not installed - cannot connect to LAN");
+        Debug.Log($"[LANNetworkManager] Would connect to {lanServerAddress}:{lanServerPort}");
+#endif
     }
     
+#if PHOTON_PUN_2 || PHOTON_REALTIME
     public override void OnConnectedToMaster()
     {
         Debug.Log("[LANNetworkManager] Connected to Master Server");
@@ -134,15 +157,17 @@ public class LANNetworkManager : MonoBehaviourPunCallbacks
     {
         Debug.Log("[LANNetworkManager] Joined lobby");
     }
+#endif
     
     public void CreateOrJoinRoom(string roomName = null)
     {
+#if PHOTON_PUN_2 || PHOTON_REALTIME
         string name = roomName ?? defaultRoomName;
         
         Debug.Log($"[LANNetworkManager] Creating/joining room: {name}");
         
         RoomOptions opts = new RoomOptions(roomOptions);
-        opts.CustomRoomProperties = new Hashtable
+        opts.CustomRoomProperties = new ExitGames.Client.Photon.Hashtable
         {
             { "gameMode", "LAN" },
             { "map", "CricketStadium" },
@@ -151,8 +176,12 @@ public class LANNetworkManager : MonoBehaviourPunCallbacks
         opts.CustomRoomPropertiesForLobby = new string[] { "gameMode", "map", "maxPlayers" };
         
         PhotonNetwork.JoinOrCreateRoom(name, opts, sqlLobby);
+#else
+        Debug.Log($"[LANNetworkManager] Would create/join room: {roomName ?? defaultRoomName}");
+#endif
     }
     
+#if PHOTON_PUN_2 || PHOTON_REALTIME
     public override void OnJoinedRoom()
     {
         Debug.Log($"[LANNetworkManager] Joined room: {PhotonNetwork.CurrentRoom.Name} (Players: {PhotonNetwork.CurrentRoom.PlayerCount}/{PhotonNetwork.CurrentRoom.MaxPlayers})");
@@ -166,11 +195,11 @@ public class LANNetworkManager : MonoBehaviourPunCallbacks
         Debug.LogError($"[LANNetworkManager] Join room failed: {returnCode} - {message}");
         
         // Try creating a new room with random name
-        string newRoomName = $"{defaultRoomName}_{Random.Range(1000, 9999)}";
+        string newRoomName = $"{defaultRoomName}_{UnityEngine.Random.Range(1000, 9999)}";
         CreateOrJoinRoom(newRoomName);
     }
     
-    public override void OnPlayerEnteredRoom(Player newPlayer)
+    public override void OnPlayerEnteredRoom(Photon.Realtime.Player newPlayer)
     {
         Debug.Log($"[LANNetworkManager] Player entered: {newPlayer.NickName} (Total: {PhotonNetwork.CurrentRoom.PlayerCount})");
         
@@ -178,25 +207,27 @@ public class LANNetworkManager : MonoBehaviourPunCallbacks
         CricketGameManager.Instance?.OnPlayerJoined(newPlayer);
     }
     
-    public override void OnPlayerLeftRoom(Player otherPlayer)
+    public override void OnPlayerLeftRoom(Photon.Realtime.Player otherPlayer)
     {
         Debug.Log($"[LANNetworkManager] Player left: {otherPlayer.NickName} (Remaining: {PhotonNetwork.CurrentRoom.PlayerCount})");
         
         CricketGameManager.Instance?.OnPlayerLeft(otherPlayer);
     }
     
-    public override void OnMasterClientSwitched(Player newMasterClient)
+    public override void OnMasterClientSwitched(Photon.Realtime.Player newMasterClient)
     {
-        Debug.Log($"[LANNetworkManager] Master client switched to: {newPlayer.NickName}");
+        Debug.Log($"[LANNetworkManager] Master client switched to: {newMasterClient.NickName}");
         
         if (PhotonNetwork.IsMasterClient)
         {
             CricketGameManager.Instance?.OnBecameMasterClient();
         }
     }
+#endif
     
     private void SpawnPlayer()
     {
+#if PHOTON_PUN_2 || PHOTON_REALTIME
         if (playerPrefab == null)
         {
             Debug.LogError("[LANNetworkManager] Player prefab not assigned!");
@@ -217,23 +248,31 @@ public class LANNetworkManager : MonoBehaviourPunCallbacks
         playerObj.name = $"Player_{PhotonNetwork.LocalPlayer.ActorNumber}";
         
         Debug.Log($"[LANNetworkManager] Spawned local player at {spawnPos}");
+#else
+        Debug.Log("[LANNetworkManager] Photon not installed - cannot spawn player");
+#endif
     }
     
     public void LeaveRoom()
     {
+#if PHOTON_PUN_2 || PHOTON_REALTIME
         if (PhotonNetwork.InRoom)
         {
             PhotonNetwork.LeaveRoom();
         }
+#endif
     }
     
     public void Disconnect()
     {
+#if PHOTON_PUN_2 || PHOTON_REALTIME
         LeaveRoom();
         PhotonNetwork.Disconnect();
+#endif
     }
     
     // RPC methods for game state synchronization
+#if PHOTON_PUN_2 || PHOTON_REALTIME
     [PunRPC]
     public void RPC_SyncGameState(string gameStateJson)
     {
@@ -276,4 +315,5 @@ public class LANNetworkManager : MonoBehaviourPunCallbacks
             photonView.RPC("RPC_BallState", RpcTarget.Others, position, velocity, PhotonNetwork.LocalPlayer.ActorNumber);
         }
     }
+#endif
 }

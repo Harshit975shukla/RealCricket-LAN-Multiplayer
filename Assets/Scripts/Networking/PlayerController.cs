@@ -1,12 +1,20 @@
 using UnityEngine;
+using System;
+
+#if PHOTON_PUN_2 || PHOTON_REALTIME
 using Photon.Pun;
 using Photon.Realtime;
+#endif
 
 /// <summary>
 /// Player controller for RealCricket LAN multiplayer
 /// Handles batting, bowling, fielding actions with network synchronization
 /// </summary>
-public class PlayerController : MonoBehaviourPun, IPunObservable
+#if PHOTON_PUN_2 || PHOTON_REALTIME
+public class PlayerController : MonoBehaviourPun, Photon.Pun.IPunObservable
+#else
+public class PlayerController : MonoBehaviour
+#endif
 {
     [Header("Player Settings")]
     [SerializeField] private float moveSpeed = 5f;
@@ -30,7 +38,11 @@ public class PlayerController : MonoBehaviourPun, IPunObservable
     // Components
     private Rigidbody rb;
     private Animator animator;
+    
+#if PHOTON_PUN_2 || PHOTON_REALTIME
     private PhotonView photonView;
+#endif
+    
     private CharacterController charController;
     
     // State
@@ -47,6 +59,13 @@ public class PlayerController : MonoBehaviourPun, IPunObservable
     private float lastSyncTime = 0f;
     private const float SYNC_INTERVAL = 0.1f; // 10Hz position sync
     
+    // Procedural Bat Swing & Local State
+    private Quaternion originalBatLocalRot;
+    private Vector3 originalBatLocalPos;
+    private bool isSwinging = false;
+    private float swingProgress = 0f;
+    private bool hasHitBallThisSwing = false;
+
     // Input
     private Vector2 moveInput;
     private bool swingInput;
@@ -58,36 +77,55 @@ public class PlayerController : MonoBehaviourPun, IPunObservable
     {
         rb = GetComponent<Rigidbody>();
         animator = GetComponent<Animator>();
+        
+#if PHOTON_PUN_2 || PHOTON_REALTIME
         photonView = GetComponent<PhotonView>();
-        charController = GetComponent<CharacterController>();
         
         // Register with game manager
-        if (photonView.IsMine)
+        if (photonView != null && photonView.IsMine)
         {
             CricketGameManager.Instance?.RegisterPlayerController(photonView.Owner.ActorNumber, this);
+        }
+#endif
+        
+        charController = GetComponent<CharacterController>();
+    }
+
+    private void Start()
+    {
+        if (batTransform != null)
+        {
+            originalBatLocalRot = batTransform.localRotation;
+            originalBatLocalPos = batTransform.localPosition;
         }
     }
     
     private void OnDestroy()
     {
+#if PHOTON_PUN_2 || PHOTON_REALTIME
         if (photonView.IsMine)
         {
             CricketGameManager.Instance?.UnregisterPlayerController(photonView.Owner.ActorNumber);
         }
+#endif
     }
     
     private void Update()
     {
-        if (!photonView.IsMine) return;
+#if PHOTON_PUN_2 || PHOTON_REALTIME
+        if (photonView != null && !photonView.IsMine) return;
+#endif
         
         HandleInput();
         HandleMovement();
         HandleActions();
+        UpdateBatSwing();
     }
     
     private void FixedUpdate()
     {
-        if (!photonView.IsMine) return;
+#if PHOTON_PUN_2 || PHOTON_REALTIME
+        if (photonView != null && !photonView.IsMine) return;
         
         // Network position sync
         if (Time.time - lastSyncTime >= SYNC_INTERVAL)
@@ -95,6 +133,7 @@ public class PlayerController : MonoBehaviourPun, IPunObservable
             SyncPosition();
             lastSyncTime = Time.time;
         }
+#endif
     }
     
     private void HandleInput()
@@ -105,55 +144,38 @@ public class PlayerController : MonoBehaviourPun, IPunObservable
         
         // Actions
         swingInput = Input.GetKeyDown(KeyCode.Space); // Bat swing
-        bowlInput = Input.GetKeyDown(KeyCode.Mouse0); // Bowl/Throw
+        bowlInput = Input.GetKeyDown(KeyCode.Mouse0) || Input.GetKeyDown(KeyCode.B); // Bowl delivery
         throwInput = Input.GetKeyDown(KeyCode.Mouse1); // Throw ball
         diveInput = Input.GetKeyDown(KeyCode.LeftControl); // Dive
     }
     
     private void HandleMovement()
     {
-        if (isBatting || isBowling)
+        if (isBatting)
         {
-            // Restricted movement during batting/bowling
+            // Restricted movement in crease during batting
             Vector3 moveDir = new Vector3(moveInput.x, 0, moveInput.y).normalized;
             if (moveDir.magnitude > 0.1f)
             {
                 float speed = Input.GetKey(KeyCode.LeftShift) ? runSpeed : moveSpeed;
-                Vector3 targetPos = transform.position + moveDir * speed * Time.deltaTime;
+                Vector3 newPos = transform.position + moveDir * speed * Time.deltaTime;
+                
+                // Keep batsman within crease bounds: X in [-1.5, 1.5], Z in [-10.8, -8.0]
+                newPos.x = Mathf.Clamp(newPos.x, -1.5f, 1.5f);
+                newPos.z = Mathf.Clamp(newPos.z, -10.8f, -8.0f);
                 
                 if (charController != null)
                 {
-                    charController.Move(moveDir * speed * Time.deltaTime);
+                    charController.Move(newPos - transform.position);
                 }
                 else if (rb != null)
                 {
-                    rb.MovePosition(targetPos);
+                    rb.MovePosition(newPos);
                 }
-                
-                // Rotate towards movement
-                Quaternion targetRot = Quaternion.LookRotation(moveDir);
-                transform.rotation = Quaternion.Slerp(transform.rotation, targetRot, rotationSpeed * Time.deltaTime);
-            }
-        }
-        else
-        {
-            // Free movement for fielding
-            Vector3 moveDir = new Vector3(moveInput.x, 0, moveInput.y).normalized;
-            if (moveDir.magnitude > 0.1f)
-            {
-                float speed = Input.GetKey(KeyCode.LeftShift) ? runSpeed : moveSpeed;
-                
-                if (charController != null)
+                else
                 {
-                    charController.Move(moveDir * speed * Time.deltaTime);
+                    transform.position = newPos;
                 }
-                else if (rb != null)
-                {
-                    rb.MovePosition(transform.position + moveDir * speed * Time.deltaTime);
-                }
-                
-                Quaternion targetRot = Quaternion.LookRotation(moveDir);
-                transform.rotation = Quaternion.Slerp(transform.rotation, targetRot, rotationSpeed * Time.deltaTime);
             }
         }
         
@@ -170,56 +192,166 @@ public class PlayerController : MonoBehaviourPun, IPunObservable
     private void HandleActions()
     {
         // Batting action
-        if (isBatting && swingInput && photonView.IsMine)
+        if (swingInput)
         {
             PerformSwing();
         }
         
         // Bowling action
-        if (isBowling && bowlInput && photonView.IsMine && hasBall)
+        if (bowlInput)
         {
-            PerformBowl();
+            if (CricketGameManager.Instance != null)
+            {
+                CricketGameManager.Instance.BowlNextDelivery();
+            }
+            else
+            {
+                PerformBowl();
+            }
         }
         
         // Fielding throw
-        if (isFielding && throwInput && photonView.IsMine && hasBall)
+        if (throwInput)
         {
             PerformThrow();
         }
         
         // Dive
-        if (diveInput && photonView.IsMine)
+        if (diveInput)
         {
             PerformDive();
+        }
+
+        if (Input.GetKeyDown(KeyCode.R))
+        {
+            if (CricketGameManager.Instance != null)
+            {
+                CricketGameManager.Instance.ResetBallForBowling();
+            }
+        }
+    }
+
+    private void UpdateBatSwing()
+    {
+        if (batTransform == null) return;
+
+        if (isSwinging)
+        {
+            swingProgress += Time.deltaTime * 5.0f; // Rapid, crisp bat swing
+
+            if (swingProgress < 0.3f)
+            {
+                // Backswing: raise bat
+                float t = swingProgress / 0.3f;
+                batTransform.localRotation = Quaternion.Slerp(originalBatLocalRot, Quaternion.Euler(-40, -30, 25), t);
+            }
+            else if (swingProgress < 0.75f)
+            {
+                // Downswing & follow-through
+                float t = (swingProgress - 0.3f) / 0.45f;
+                batTransform.localRotation = Quaternion.Slerp(Quaternion.Euler(-40, -30, 25), Quaternion.Euler(65, 35, -20), t);
+
+                CheckBatContact();
+            }
+            else if (swingProgress <= 1.0f)
+            {
+                // Recovery to stance
+                float t = (swingProgress - 0.75f) / 0.25f;
+                batTransform.localRotation = Quaternion.Slerp(Quaternion.Euler(65, 35, -20), originalBatLocalRot, t);
+            }
+            else
+            {
+                isSwinging = false;
+                batTransform.localRotation = originalBatLocalRot;
+                batTransform.localPosition = originalBatLocalPos;
+            }
+        }
+    }
+
+    private void CheckBatContact()
+    {
+        if (hasHitBallThisSwing) return;
+
+        GameObject ballObj = null;
+        ballObj = GameObject.FindWithTag("Ball");
+        if (ballObj == null)
+        {
+            BallController bc = FindObjectOfType<BallController>();
+            if (bc != null) ballObj = bc.gameObject;
+        }
+
+        if (ballObj != null)
+        {
+            Vector3 ballPos = ballObj.transform.position;
+            float dist = Vector3.Distance(transform.position, ballPos);
+
+            // Batsman hitting range
+            if (dist <= 3.2f)
+            {
+                hasHitBallThisSwing = true;
+
+                // Horizontal movement (A/D) aims shot to Off-side (-X) or Leg-side (+X)
+                float aimX = moveInput.x * 1.5f + UnityEngine.Random.Range(-0.15f, 0.15f);
+                float loftAngle = UnityEngine.Random.Range(0.28f, 0.58f); // High loft into the outfield
+                Vector3 shotDir = new Vector3(aimX, loftAngle, 1.0f).normalized;
+
+                // Shot power based on swingForce + variance
+                float shotPower = swingForce * UnityEngine.Random.Range(1.35f, 1.95f);
+
+                BallController bc = ballObj.GetComponent<BallController>();
+                if (bc != null)
+                {
+                    bc.ApplyBatForce(shotDir * shotPower, 1);
+                }
+                else
+                {
+                    Rigidbody rbBall = ballObj.GetComponent<Rigidbody>();
+                    if (rbBall != null)
+                    {
+                        rbBall.velocity = Vector3.zero;
+                        rbBall.AddForce(shotDir * shotPower, ForceMode.Impulse);
+                    }
+                }
+
+                if (CricketGameManager.Instance != null)
+                {
+                    CricketGameManager.Instance.OnBallHit(shotDir * shotPower);
+                }
+            }
         }
     }
     
     private void PerformSwing()
     {
+        if (!isBatting) return;
+        if (isSwinging) return;
+        isSwinging = true;
+        swingProgress = 0f;
+        hasHitBallThisSwing = false;
+
         // Trigger swing animation
         if (animator != null)
         {
             animator.SetTrigger("Swing");
         }
         
-        // Apply force to ball if near
-        if (currentBall != null && ballController != null)
+#if PHOTON_PUN_2 || PHOTON_REALTIME
+        if (photonView != null && photonView.IsMine && PhotonNetwork.IsConnected)
         {
             Vector3 swingDir = batTransform != null ? batTransform.forward : transform.forward;
-            ballController.ApplyBatForce(swingDir * swingForce, photonView.Owner.ActorNumber);
-            
-            // Send action to network
-            LANNetworkManager.Instance.SendPlayerAction("Swing", JsonUtility.ToJson(new SwingData
+            LANNetworkManager.Instance?.SendPlayerAction("Swing", JsonUtility.ToJson(new SwingData
             {
                 direction = swingDir,
                 force = swingForce,
                 timestamp = PhotonNetwork.Time
             }));
         }
+#endif
     }
     
     private void PerformBowl()
     {
+#if PHOTON_PUN_2 || PHOTON_REALTIME
         if (animator != null)
         {
             animator.SetTrigger("Bowl");
@@ -242,10 +374,12 @@ public class PlayerController : MonoBehaviourPun, IPunObservable
             hasBall = false;
             currentBall = null;
         }
+#endif
     }
     
     private void PerformThrow()
     {
+#if PHOTON_PUN_2 || PHOTON_REALTIME
         if (animator != null)
         {
             animator.SetTrigger("Throw");
@@ -266,10 +400,12 @@ public class PlayerController : MonoBehaviourPun, IPunObservable
             hasBall = false;
             currentBall = null;
         }
+#endif
     }
     
     private void PerformDive()
     {
+#if PHOTON_PUN_2 || PHOTON_REALTIME
         if (animator != null)
         {
             animator.SetTrigger("Dive");
@@ -280,93 +416,103 @@ public class PlayerController : MonoBehaviourPun, IPunObservable
             direction = transform.forward,
             timestamp = PhotonNetwork.Time
         }));
+#endif
     }
     
     public void SetRole(bool batting, bool bowling, bool fielding)
-    {
-        isBatting = batting;
-        isBowling = bowling;
-        isFielding = fielding;
-        
-        if (animator != null)
         {
-            animator.SetBool("IsBatting", isBatting);
-            animator.SetBool("IsBowling", isBowling);
-        }
-    }
-    
-    public void GiveBall(GameObject ball)
-    {
-        currentBall = ball;
-        ballController = ball.GetComponent<BallController>();
-        hasBall = true;
+            isBatting = batting;
+            isBowling = bowling;
+            isFielding = fielding;
         
-        // Attach ball to hand (for bowling)
-        if (isBowling && ballReleasePoint != null)
-        {
-            ball.transform.SetParent(ballReleasePoint);
-            ball.transform.localPosition = Vector3.zero;
-            ball.transform.localRotation = Quaternion.identity;
-            
-            // Disable physics while held
-            Rigidbody ballRb = ball.GetComponent<Rigidbody>();
-            if (ballRb != null)
+            if (animator != null)
             {
-                ballRb.isKinematic = true;
+                animator.SetBool("IsBatting", isBatting);
+                animator.SetBool("IsBowling", isBowling);
             }
         }
-    }
     
-    public void ReleaseBall()
-    {
-        if (currentBall != null)
+        public void GiveBall(GameObject ball)
         {
-            currentBall.transform.SetParent(null);
-            
-            Rigidbody ballRb = currentBall.GetComponent<Rigidbody>();
-            if (ballRb != null)
+    #if PHOTON_PUN_2 || PHOTON_REALTIME
+            currentBall = ball;
+            ballController = ball.GetComponent<BallController>();
+            hasBall = true;
+        
+            // Attach ball to hand (for bowling)
+            if (isBowling && ballReleasePoint != null)
             {
-                ballRb.isKinematic = false;
-            }
+                ball.transform.SetParent(ballReleasePoint);
+                ball.transform.localPosition = Vector3.zero;
+                ball.transform.localRotation = Quaternion.identity;
             
-            currentBall = null;
-            ballController = null;
-            hasBall = false;
+                // Disable physics while held
+                Rigidbody ballRb = ball.GetComponent<Rigidbody>();
+                if (ballRb != null)
+                {
+                    ballRb.isKinematic = true;
+                }
+            }
+    #endif
         }
-    }
     
-    public void HandleRemoteAction(string action, string data)
-    {
-        switch (action)
+        public void ReleaseBall()
         {
-            case "Swing":
-                SwingData swingData = JsonUtility.FromJson<SwingData>(data);
-                // Play swing animation for remote player
-                if (animator != null) animator.SetTrigger("Swing");
-                break;
-                
-            case "Bowl":
-                BowlData bowlData = JsonUtility.FromJson<BowlData>(data);
-                if (animator != null) animator.SetTrigger("Bowl");
-                break;
-                
-            case "Throw":
-                ThrowData throwData = JsonUtility.FromJson<ThrowData>(data);
-                if (animator != null) animator.SetTrigger("Throw");
-                break;
-                
-            case "Dive":
-                if (animator != null) animator.SetTrigger("Dive");
-                break;
+    #if PHOTON_PUN_2 || PHOTON_REALTIME
+            if (currentBall != null)
+            {
+                currentBall.transform.SetParent(null);
+            
+                Rigidbody ballRb = currentBall.GetComponent<Rigidbody>();
+                if (ballRb != null)
+                {
+                    ballRb.isKinematic = false;
+                }
+            
+                currentBall = null;
+                ballController = null;
+                hasBall = false;
+            }
+    #endif
         }
-    }
     
-    private void SyncPosition()
-    {
-        // Position and rotation are synced via PhotonTransformView
-        // This is handled automatically by PhotonTransformView component
-    }
+        public void HandleRemoteAction(string action, string data)
+        {
+    #if PHOTON_PUN_2 || PHOTON_REALTIME
+            switch (action)
+            {
+                case "Swing":
+                    SwingData swingData = JsonUtility.FromJson<SwingData>(data);
+                    // Play swing animation for remote player
+                    if (animator != null) animator.SetTrigger("Swing");
+                    break;
+            
+                case "Bowl":
+                    BowlData bowlData = JsonUtility.FromJson<BowlData>(data);
+                    if (animator != null) animator.SetTrigger("Bowl");
+                    break;
+            
+                case "Throw":
+                    ThrowData throwData = JsonUtility.FromJson<ThrowData>(data);
+                    if (animator != null) animator.SetTrigger("Throw");
+                    break;
+            
+                case "Dive":
+                    if (animator != null) animator.SetTrigger("Dive");
+                    break;
+            }
+    #endif
+        }
     
+        private void SyncPosition()
+        {
+    #if PHOTON_PUN_2 || PHOTON_REALTIME
+            // Position and rotation are synced via PhotonTransformView
+            // This is handled automatically by PhotonTransformView component
+    #endif
+        }
+    
+#if PHOTON_PUN_2 || PHOTON_REALTIME
     public void OnPhotonSerializeView(PhotonStream stream, PhotonMessageInfo info)
     {
         if (stream.IsWriting)
@@ -388,7 +534,7 @@ public class PlayerController : MonoBehaviourPun, IPunObservable
             isBowling = (bool)stream.ReceiveNext();
             isFielding = (bool)stream.ReceiveNext();
             hasBall = (bool)stream.ReceiveNext();
-            
+        
             // Interpolate for smooth movement
             if (!photonView.IsMine)
             {
@@ -397,22 +543,27 @@ public class PlayerController : MonoBehaviourPun, IPunObservable
             }
         }
     }
+#endif
     
     // Animation events (called from animations)
     public void OnSwingHit()
     {
+#if PHOTON_PUN_2 || PHOTON_REALTIME
         // Called at the moment of bat-ball contact in animation
         if (currentBall != null && ballController != null && photonView.IsMine)
         {
             Vector3 hitDir = batTransform != null ? batTransform.forward : transform.forward;
             ballController.ApplyBatForce(hitDir * swingForce * 1.5f, photonView.Owner.ActorNumber);
         }
+#endif
     }
     
     public void OnBallReleased()
     {
+#if PHOTON_PUN_2 || PHOTON_REALTIME
         // Called when ball leaves hand in bowling animation
         ReleaseBall();
+#endif
     }
     
     [Serializable]
